@@ -1,0 +1,176 @@
+<html>
+<head>
+  <title>Mqtt-Client</title>
+</head>
+<body>
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-alpha.6/css/bootstrap.min.css" integrity="sha384-rwoIResjU2yc3z8GV/NPeZWAv56rSmLldC3R/AZzGRnGxQQKnKkoFVhFQhNUwEyJ" crossorigin="anonymous">
+<link rel="stylesheet" href="./styles/main.css">
+
+<script src="https://use.fontawesome.com/02c4a26f1e.js"></script>
+<script src="https://code.jquery.com/jquery-3.1.1.min.js" integrity="sha256-hVVnYaiADRTO2PzUGmuLJr8BLUSjGIZsDYGmIJLv2b8=" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tether/1.4.0/js/tether.min.js"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-alpha.6/js/bootstrap.min.js" integrity="sha384-vBWWzlZJ8ea9aCX4pEW3rVHjgjt7zpkNpZk+02D9phzyeVkE+jo0ieGizqPLForn" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/handlebars.js/4.0.6/handlebars.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/handlebars.js/4.0.6/handlebars.runtime.min.js"></script>
+<script src="https://cdn.jsdelivr.net/lodash/4.17.4/lodash.min.js"></script>
+
+<script src="./templates.js"></script>
+<script src="./libs/browser-mqtt.js"></script>
+
+  <script>
+    $( document ).ready(function() {
+      var mqttServer = {
+        url: 'ws://192.168.0.14',
+        port: 3000,
+        protocolId: 'MQTT'
+      };
+
+      var Devices = [];
+      var Client;
+
+      //EVENTS
+      $("#password").keyup(function(event){
+        if(event.keyCode == 13){
+          var username = $("#username").val();
+          var password = $("#password").val();
+          connect(username, password);
+        }
+      });
+
+      $("#submit").click(function(event){
+        var username = $("#username").val();
+        var password = $("#password").val();
+        connect(username, password);
+      });
+
+      //ACTIONS
+      function connect(username, password){
+        var timestamp = Date.now();
+
+        Client = mqtt.connect(mqttServer.url + ":" + mqttServer.port, {
+          username: username,
+          password: password,
+          protocolId: mqttServer.protocolId,
+          clientId: timestamp + ':' + username
+        });
+
+        Client.subscribe("users/"+username+"/#");
+
+        Client.on("connect", function(){
+          console.log("Succesfully conected to mqtt broker");
+
+          //Requesting to all devices to report himself to the mqtt broker
+          console.log("Publishing to users/%s/report", username);
+          Client.publish("users/"+username+"/report", "gooby pls!");
+
+          $("#login-page").hide();
+          $("#main-page").show();
+        });
+
+        Client.on("error", function(){
+          console.log("Error while conecting to mqtt-server");
+          client.end();
+        });
+
+        Client.on("message", function (topic, payload){
+          console.log("New incoming message: ", [topic, payload].join(": "));
+          //making sense of the recived message (topic and payload)
+          var route = topic.split("/");
+          var payload;
+          try{
+            payload = JSON.parse(payload);
+          }catch(e){
+            payload = null;
+          }
+
+          var message = {
+            username : route[1], //username
+            deviceId : route[2], //device id
+            type     : route[3], //sensor, actuator, register
+            name     : route[4], //sensor, actuator or device alias (temperature, relay1, server-room)
+            data     : payload  //payload recived
+          };
+
+          switch (message.type) {
+            case 'register':
+                registerDevice(message);
+              break;
+            case 'sensor':
+                upsertSensorView(message);
+              break;
+            case 'actuator':
+                upserActuatorView(message);
+              break;
+            default:
+              console.log("unknown message type %s", message.type);
+          }
+        });
+
+        function registerDevice(message){
+          var currentDevice = _.find(Devices, function(device){
+            return device.id == message.deviceId;
+          });
+
+          //if the device is not allready registered then add it to the Devices collection
+          if(!currentDevice){
+            currentDevice = {
+              id        : message.deviceId,
+              name      : message.name,
+              sensors   : message.data.sensors,
+              actuators : message.data.actuators
+            };
+          }
+
+          Devices[currentDevice.id] = currentDevice;
+        }
+
+        function upsertSensorView(message){
+          var componentId = [
+              message.deviceId,
+              message.type, //here type will allways equal to "sensor"
+              message.name
+          ].join('-');
+
+          var view = $("#"+componentId)[0];
+
+          if(view){
+            //if the view for the sensor its allready rendererd update his values
+            $(view).find(".sensor-value").html(message.data.value);
+            $(view).find(".sensor-origin").html(message.data.origin);
+          }else{
+            //if not, add it to the main-page
+            var ctx = {
+              id     : componentId,
+              origin : message.data.origin,
+              value  : message.data.value
+            };
+            var html = Handlebars.templates[message.name](ctx);
+            $("#main-page").append(html);
+          }
+        }
+
+        function upserActuatorView(){
+
+        }
+      }
+
+    });
+  </script>
+</body>
+
+  <div id="login-page">
+    <div class="box">
+      <div class="login-form" >
+        <input  id="username" type="text" placeholder="username"/>
+        <input  id="password" type="password" placeholder="password"/>
+        <button id="submit">login</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="main-page" class="hidden">
+
+  </div>
+
+</html>
